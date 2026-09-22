@@ -35,6 +35,18 @@ void echo_server(int sockfd) {
     }
 }
 
+int read_from_socket(int fd, void* buf, int size) {
+    int size_received = 0;
+    while (size_received < size) {
+        int ret_value = read(fd, (char*)buf + size_received, size - size_received);
+        if (ret_value <= 0) {
+            return ret_value; 
+        }
+        size_received += ret_value;
+    }
+    return size_received;
+}
+
 int main(int argc, char** argv) {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <server_port>\n", argv[0]);
@@ -114,18 +126,33 @@ int main(int argc, char** argv) {
 
         for (int i = 1; i < FD_TAB_SIZE; i++) {
             if (fds[i].fd != -1 && (fds[i].revents & POLLIN)) {
-                char buf[MSG_LEN];
-                memset(buf, 0, MSG_LEN);
-                int ret = recv(fds[i].fd, buf, MSG_LEN, 0);
+                int msg_size = 0;
+                
+                int ret = read_from_socket(fds[i].fd, &msg_size, sizeof(int));
                 
                 if (ret <= 0) {
                     printf("Client déconnecté sur le fd %d\n", fds[i].fd);
                     close(fds[i].fd);
                     fds[i].fd = -1; 
                 } else {
-                    printf("Reçu du fd %d: %s", fds[i].fd, buf);
-                    if (send(fds[i].fd, buf, ret, 0) <= 0) {
-                        perror("send()");
+                    char buf[MSG_LEN];
+                    memset(buf, 0, MSG_LEN);
+                    
+                    if (msg_size > 0 && msg_size < MSG_LEN) {
+                        ret = read_from_socket(fds[i].fd, buf, msg_size);
+                        if (ret <= 0) {
+                            close(fds[i].fd);
+                            fds[i].fd = -1;
+                            fds[i].revents = 0;
+                            continue;
+                        }
+                        buf[msg_size] = '\0';
+                        printf("Reçu du fd %d (taille %d): %s", fds[i].fd, msg_size, buf);
+
+                        if (send(fds[i].fd, &msg_size, sizeof(int), 0) <= 0 ||
+                            send(fds[i].fd, buf, msg_size, 0) <= 0) {
+                            perror("send()");
+                        }
                     }
                 }
                 fds[i].revents = 0;
