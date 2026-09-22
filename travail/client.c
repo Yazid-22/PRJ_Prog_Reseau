@@ -39,6 +39,14 @@ void echo_client(int sockfd) {
                 }
             }
             buff[n] = '\0';
+            if(strcmp("/quit",buff) == 0)
+            {
+                int size = strlen(buff);
+                send(sockfd, &size, sizeof(int), 0);
+                send(sockfd, buff, size, 0);
+                printf("demande de deconnexion... \n");
+                break;
+            }
             
             int size = strlen(buff);
             if (size > 0) {
