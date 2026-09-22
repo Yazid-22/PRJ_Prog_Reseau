@@ -6,65 +6,77 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <poll.h>
 
 #include "common.h"
 
 void echo_client(int sockfd) {
+    struct pollfd fds[2];
+    
+    fds[0].fd = STDIN_FILENO;
+    fds[0].events = POLLIN;
+
+    fds[1].fd = sockfd;
+    fds[1].events = POLLIN;
+
     char buff[MSG_LEN];
-    int n;
+    printf("Message: ");
+
     while (1) {
-        // Cleaning memory
-        memset(buff, 0, MSG_LEN);
-        // Getting message from client
-        printf("Message: ");
-        n = 0;
-        while ((buff[n++] = getchar()) != '\n') 
-        {
-            if(n >= MSG_LEN - 1)
-            {
+        int nbfds = poll(fds, 2, -1);
+        if (nbfds < 0) {
+            perror("poll()");
+            break;
+        }
+
+        if (fds[0].revents & POLLIN) {
+            memset(buff, 0, MSG_LEN);
+            int n = 0;
+            
+            while ((buff[n++] = getchar()) != '\n') {
+                if (n >= MSG_LEN - 1) {
+                    break;
+                }
+            }
+            buff[n] = '\0';
+            
+            int size = strlen(buff);
+            if (size > 0) {
+                if (send(sockfd, &size, sizeof(int), 0) <= 0) {
+                    break;
+                }
+                if (send(sockfd, buff, size, 0) <= 0) {
+                    break;
+                }
+                printf("Envoi du message reussi!\n");
+            }
+            
+            printf("Message: ");
+            fds[0].revents = 0;
+        }
+
+        if (fds[1].revents & POLLIN) {
+            int response_size = 0;
+            if (recv(sockfd, &response_size, sizeof(int), 0) <= 0) {
+                printf("\nServeur déconnecté.\n");
                 break;
             }
-        } // trailing '\n' will be sent
-        buff[n] = '\0';
-        
-        int size = strlen(buff);
-        if(size <= 0)
-        {
-            fprintf(stderr, "taille du message bizarre !!\n");
-            continue;
-        }
 
-        // 1. Envoi de la taille du message (les octets d'un int)
-        if (send(sockfd, &size, sizeof(int), 0) <= 0) {
-            break;
-        }
-        
-        // 2. Envoi de la chaîne de caractères
-        if (send(sockfd, buff, size, 0) <= 0) {
-            break;
-        }
-        printf("Envoi du message reussi!\n");
-
-        int response_size = 0;
-        if(recv(sockfd, &response_size, sizeof(int), 0) <= 0)
-        {
-            break;
-        }
-
-        memset(buff, 0, MSG_LEN);
-        int total_received = 0;
-        while(total_received < response_size)
-        {
-            int ret = recv(sockfd, buff + total_received, response_size - total_received, 0);
-            if(ret <= 0)
-            {
-                break;
+            memset(buff, 0, MSG_LEN);
+            int total_received = 0;
+            while (total_received < response_size) {
+                int ret = recv(sockfd, buff + total_received, response_size - total_received, 0);
+                if (ret <= 0) {
+                    break;
+                }
+                total_received += ret;
             }
-            total_received += ret;
+            buff[total_received] = '\0';
+            
+            printf("\nReception du message: %s", buff);
+            printf("Message: ");
+            fds[1].revents = 0;
         }
-        buff[total_received] = '\0';
-        
-        printf("Reception du message: %s", buff);
     }
 }
 
@@ -97,8 +109,7 @@ int handle_connect(const char* host, const char* port) {
 }
 
 int main(int argc, char* argv[]) {
-    if(argc != 3)
-    {
+    if (argc != 3) {
         fprintf(stderr, "pas de numero de port et de serveur indique\n");
         exit(EXIT_FAILURE);
     }
