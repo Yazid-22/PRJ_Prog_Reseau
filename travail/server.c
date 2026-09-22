@@ -201,7 +201,7 @@ int main(int argc, char** argv) {
                         }
                         buf[msg_size] = '\0';
                         
-                        if(strcmp("/quit", buf) == 0) {
+                        if (strncmp("/quit", buf, 5) == 0) {
                             printf("client deconnecte sur le fd %d\n", fds[i].fd);
                             liste_clients = remove_client(liste_clients, fds[i].fd);
                             close(fds[i].fd);

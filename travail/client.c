@@ -39,8 +39,8 @@ void echo_client(int sockfd) {
                 }
             }
             buff[n] = '\0';
-            if(strcmp("/quit",buff) == 0)
-            {
+            
+            if (strncmp("/quit", buff, 5) == 0) {
                 int size = strlen(buff);
                 send(sockfd, &size, sizeof(int), 0);
                 send(sockfd, buff, size, 0);
@@ -49,7 +49,7 @@ void echo_client(int sockfd) {
             }
             
             int size = strlen(buff);
-            if (size > 0) {
+            if (size > 1) {
                 if (send(sockfd, &size, sizeof(int), 0) <= 0) {
                     break;
                 }
