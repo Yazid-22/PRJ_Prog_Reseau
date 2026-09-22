@@ -21,6 +21,7 @@ void echo_client(int sockfd) {
 
     char buff[MSG_LEN];
     printf("Message: ");
+    fflush(stdout);
 
     while (1) {
         int nbfds = poll(fds, 2, -1);
@@ -59,7 +60,6 @@ void echo_client(int sockfd) {
                 printf("Envoi du message reussi!\n");
             }
             
-            printf("Message: ");
             fds[0].revents = 0;
         }
 
@@ -83,6 +83,7 @@ void echo_client(int sockfd) {
             
             printf("\nReception du message: %s", buff);
             printf("Message: ");
+            fflush(stdout);
             fds[1].revents = 0;
         }
     }
