@@ -13,11 +13,51 @@
 
 #define FD_TAB_SIZE 128
 
+typedef struct client {
+    int fd;
+    struct sockaddr_storage addr;
+    socklen_t addr_len;
+    struct client* next;
+} client_t;
+
 void die(int ret, const char* msg) {
     if (ret < 0) {
         perror(msg);
         exit(EXIT_FAILURE);
     }
+}
+
+client_t* add_client(client_t* tete, int fd, struct sockaddr_storage* addr, socklen_t addr_len) {
+    client_t* nouveau = malloc(sizeof(client_t));
+    if (!nouveau) {
+        perror("malloc()");
+        exit(EXIT_FAILURE);
+    }
+    nouveau->fd = fd;
+    nouveau->addr = *addr;
+    nouveau->addr_len = addr_len;
+    nouveau->next = tete;
+    return nouveau;
+}
+
+client_t* remove_client(client_t* tete, int fd) {
+    client_t* actuel = tete;
+    client_t* precedent = NULL;
+
+    while (actuel != NULL) {
+        if (actuel->fd == fd) {
+            if (precedent == NULL) {
+                tete = actuel->next;
+            } else {
+                precedent->next = actuel->next;
+            }
+            free(actuel);
+            return tete;
+        }
+        precedent = actuel;
+        actuel = actuel->next;
+    }
+    return tete;
 }
 
 void echo_server(int sockfd) {
@@ -97,6 +137,8 @@ int main(int argc, char** argv) {
     fds[0].fd = listen_fd;
     fds[0].events = POLLIN;
 
+    client_t* liste_clients = NULL;
+
     printf("Serveur en ecoute sur le port %s...\n", server_port);
 
     while (1) {
@@ -104,14 +146,23 @@ int main(int argc, char** argv) {
         if (nbfds < 0) break;
 
         if (fds[0].revents & POLLIN) {
-            int new_fd = accept(listen_fd, NULL, NULL);
+            struct sockaddr_storage client_addr;
+            socklen_t client_len = sizeof(client_addr);
+            int new_fd = accept(listen_fd, (struct sockaddr*)&client_addr, &client_len);
+            
             if (new_fd != -1) {
                 int added = 0;
                 for (int j = 1; j < FD_TAB_SIZE; j++) {
                     if (fds[j].fd == -1) {
                         fds[j].fd = new_fd;
                         fds[j].events = POLLIN;
-                        printf("Nouveau client connecte sur le fd %d\n", new_fd);
+                        
+                        liste_clients = add_client(liste_clients, new_fd, &client_addr, client_len);
+                        
+                        char host[NI_MAXHOST], serv[NI_MAXSERV];
+                        getnameinfo((struct sockaddr*)&client_addr, client_len, host, sizeof(host), serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
+                        printf("Nouveau client connecte depuis %s:%s sur le fd %d\n", host, serv, new_fd);
+                        
                         added = 1;
                         break;
                     }
@@ -132,6 +183,7 @@ int main(int argc, char** argv) {
                 
                 if (ret <= 0) {
                     printf("Client déconnecté sur le fd %d\n", fds[i].fd);
+                    liste_clients = remove_client(liste_clients, fds[i].fd);
                     close(fds[i].fd);
                     fds[i].fd = -1; 
                 } else {
@@ -141,12 +193,23 @@ int main(int argc, char** argv) {
                     if (msg_size > 0 && msg_size < MSG_LEN) {
                         ret = read_from_socket(fds[i].fd, buf, msg_size);
                         if (ret <= 0) {
+                            liste_clients = remove_client(liste_clients, fds[i].fd);
                             close(fds[i].fd);
                             fds[i].fd = -1;
                             fds[i].revents = 0;
                             continue;
                         }
                         buf[msg_size] = '\0';
+                        
+                        if(strcmp("/quit", buf) == 0) {
+                            printf("client deconnecte sur le fd %d\n", fds[i].fd);
+                            liste_clients = remove_client(liste_clients, fds[i].fd);
+                            close(fds[i].fd);
+                            fds[i].fd = -1;
+                            fds[i].revents = 0;
+                            continue;
+                        }
+
                         printf("Reçu du fd %d (taille %d): %s", fds[i].fd, msg_size, buf);
 
                         if (send(fds[i].fd, &msg_size, sizeof(int), 0) <= 0 ||
@@ -158,6 +221,13 @@ int main(int argc, char** argv) {
                 fds[i].revents = 0;
             }
         }
+    }
+
+    while (liste_clients != NULL) {
+        client_t* temp = liste_clients;
+        liste_clients = liste_clients->next;
+        close(temp->fd);
+        free(temp);
     }
 
     close(listen_fd);
