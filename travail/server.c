@@ -8,15 +8,21 @@
 #include <string.h>
 #include <poll.h>
 #include <netdb.h>
+#include <ctype.h>
+#include <time.h>
 
 #include "common.h"
+#include "msg_struct.h"
 
 #define FD_TAB_SIZE 128
 
+// Req 2.3 : Mise à jour de la structure client avec pseudo et date de co
 typedef struct client {
     int fd;
     struct sockaddr_storage addr;
     socklen_t addr_len;
+    char pseudo[NICK_LEN];
+    time_t date_co;
     struct client* next;
 } client_t;
 
@@ -36,6 +42,8 @@ client_t* add_client(client_t* tete, int fd, struct sockaddr_storage* addr, sock
     nouveau->fd = fd;
     nouveau->addr = *addr;
     nouveau->addr_len = addr_len;
+    memset(nouveau->pseudo, 0, NICK_LEN); // Pseudo vide au départ
+    time(&(nouveau->date_co)); // Date de connexion
     nouveau->next = tete;
     return nouveau;
 }
@@ -60,28 +68,39 @@ client_t* remove_client(client_t* tete, int fd) {
     return tete;
 }
 
-void echo_server(int sockfd) {
-    char buff[MSG_LEN];
-    while (1) {
-        memset(buff, 0, MSG_LEN);
-        if (recv(sockfd, buff, MSG_LEN, 0) <= 0) {
-            break;
-        }
-        printf("Received: %s", buff);
-        if (send(sockfd, buff, strlen(buff), 0) <= 0) {
-            break;
-        }
-        printf("Message envoye!\n");
+client_t* get_client_by_fd(client_t* tete, int fd) {
+    client_t* actuel = tete;
+    while (actuel != NULL) {
+        if (actuel->fd == fd) return actuel;
+        actuel = actuel->next;
     }
+    return NULL;
+}
+
+// Req 2.2 : Vérifier si un pseudo est déjà utilisé
+int pseudo_existe(client_t* tete, const char* pseudo) {
+    client_t* actuel = tete;
+    while (actuel != NULL) {
+        if (strcmp(actuel->pseudo, pseudo) == 0) return 1;
+        actuel = actuel->next;
+    }
+    return 0;
+}
+
+// Req 2.1 : Valider alphanumérique
+int est_pseudo_valide(const char* pseudo) {
+    if (strlen(pseudo) == 0 || strlen(pseudo) >= NICK_LEN) return 0;
+    for (int i = 0; pseudo[i] != '\0'; i++) {
+        if (!isalnum(pseudo[i])) return 0;
+    }
+    return 1;
 }
 
 int read_from_socket(int fd, void* buf, int size) {
     int size_received = 0;
     while (size_received < size) {
         int ret_value = read(fd, (char*)buf + size_received, size - size_received);
-        if (ret_value <= 0) {
-            return ret_value; 
-        }
+        if (ret_value <= 0) return ret_value;
         size_received += ret_value;
     }
     return size_received;
@@ -98,19 +117,12 @@ void gerer_nouvelle_connexion(int listen_fd, struct pollfd* fds, client_t** list
             if (fds[j].fd == -1) {
                 fds[j].fd = new_fd;
                 fds[j].events = POLLIN;
-                
                 *liste_clients = add_client(*liste_clients, new_fd, &client_addr, client_len);
-                
-                char host[NI_MAXHOST], serv[NI_MAXSERV];
-                getnameinfo((struct sockaddr*)&client_addr, client_len, host, sizeof(host), serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
-                printf("Nouveau client connecte depuis %s:%s sur le fd %d\n", host, serv, new_fd);
-                
                 ajoute = 1;
                 break;
             }
         }
         if (!ajoute) {
-            printf("Serveur plein, rejet du client.\n");
             close(new_fd);
         }
     }
@@ -118,46 +130,70 @@ void gerer_nouvelle_connexion(int listen_fd, struct pollfd* fds, client_t** list
 }
 
 void gerer_donnees_client(struct pollfd* fds, int i, client_t** liste_clients) {
-    int msg_size = 0;
-    int ret = read_from_socket(fds[i].fd, &msg_size, sizeof(int));
+    struct message msg;
+    memset(&msg, 0, sizeof(struct message));
+
+    // Req 2.0 : Lire la structure
+    int ret = read_from_socket(fds[i].fd, &msg, sizeof(struct message));
     
     if (ret <= 0) {
-        printf("Client déconnecté sur le fd %d\n", fds[i].fd);
         *liste_clients = remove_client(*liste_clients, fds[i].fd);
         close(fds[i].fd);
-        fds[i].fd = -1; 
-    } else {
-        char buf[MSG_LEN];
-        memset(buf, 0, MSG_LEN);
-        
-        if (msg_size > 0 && msg_size < MSG_LEN) {
-            ret = read_from_socket(fds[i].fd, buf, msg_size);
-            if (ret <= 0) {
-                *liste_clients = remove_client(*liste_clients, fds[i].fd);
-                close(fds[i].fd);
-                fds[i].fd = -1;
-                fds[i].revents = 0;
-                return;
-            }
-            buf[msg_size] = '\0';
-            
-            if (strncmp("/quit", buf, 5) == 0) {
-                printf("client deconnecte sur le fd %d\n", fds[i].fd);
-                *liste_clients = remove_client(*liste_clients, fds[i].fd);
-                close(fds[i].fd);
-                fds[i].fd = -1;
-                fds[i].revents = 0;
-                return;
-            }
-
-            printf("Reçu du fd %d (taille %d): %s", fds[i].fd, msg_size, buf);
-
-            if (send(fds[i].fd, &msg_size, sizeof(int), 0) <= 0 ||
-                send(fds[i].fd, buf, msg_size, 0) <= 0) {
-                perror("send()");
-            }
-        }
+        fds[i].fd = -1;
+        return;
     }
+
+    // Req 2.0 : Lire le payload éventuel
+    char* payload = NULL;
+    if (msg.pld_len > 0) {
+        payload = malloc(msg.pld_len + 1);
+        ret = read_from_socket(fds[i].fd, payload, msg.pld_len);
+        if (ret <= 0) {
+            free(payload);
+            *liste_clients = remove_client(*liste_clients, fds[i].fd);
+            close(fds[i].fd);
+            fds[i].fd = -1;
+            return;
+        }
+        payload[msg.pld_len] = '\0';
+    }
+
+    client_t* expediteur = get_client_by_fd(*liste_clients, fds[i].fd);
+    if (!expediteur) {
+        if(payload) free(payload);
+        return;
+    }
+
+    struct message reponse_msg;
+    memset(&reponse_msg, 0, sizeof(struct message));
+    char reponse_txt[MSG_LEN];
+    memset(reponse_txt, 0, MSG_LEN);
+
+    // Req 2.1, 2.2, 2.4 : Gestion de NICKNAME_NEW
+    if (msg.type == NICKNAME_NEW) {
+        if (!est_pseudo_valide(msg.infos)) {
+            sprintf(reponse_txt, "[Serveur] : Pseudo invalide (lettres et chiffres uniquement).\n");
+        } else if (pseudo_existe(*liste_clients, msg.infos)) {
+            sprintf(reponse_txt, "[Serveur] : Erreur, ce pseudo est deja utilise.\n");
+        } else {
+            strcpy(expediteur->pseudo, msg.infos);
+            sprintf(reponse_txt, "[Serveur] : Welcome on the chat %s\n", expediteur->pseudo);
+        }
+        
+        reponse_msg.type = NICKNAME_NEW;
+        reponse_msg.pld_len = strlen(reponse_txt);
+        send(fds[i].fd, &reponse_msg, sizeof(struct message), 0);
+        send(fds[i].fd, reponse_txt, reponse_msg.pld_len, 0);
+    }
+    // Req 2.11 : Echo pour tester (en attendant les requêtes msg/msgall)
+    else if (msg.type == ECHO_SEND) {
+        reponse_msg.type = ECHO_SEND;
+        reponse_msg.pld_len = msg.pld_len;
+        send(fds[i].fd, &reponse_msg, sizeof(struct message), 0);
+        if (payload) send(fds[i].fd, payload, msg.pld_len, 0);
+    }
+
+    if (payload) free(payload);
     fds[i].revents = 0;
 }
 
@@ -192,14 +228,9 @@ int main(int argc, char** argv) {
         close(listen_fd);
     }
 
-    if (rp == NULL) {
-        fprintf(stderr, "Could not bind\n");
-        exit(EXIT_FAILURE);
-    }
     freeaddrinfo(result);
 
-    int ret_value = listen(listen_fd, SOMAXCONN);
-    die(ret_value, "Listening");
+    listen(listen_fd, SOMAXCONN);
 
     struct pollfd fds[FD_TAB_SIZE];
     for (int i = 0; i < FD_TAB_SIZE; i++) {

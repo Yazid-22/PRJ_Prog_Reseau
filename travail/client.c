@@ -9,6 +9,7 @@
 #include <poll.h>
 
 #include "common.h"
+#include "msg_struct.h" // Req 2.0
 
 void echo_client(int sockfd) {
     struct pollfd fds[2];
@@ -23,65 +24,85 @@ void echo_client(int sockfd) {
     printf("Message: ");
     fflush(stdout);
 
+    // On stocke le pseudo actuel du client
+    char my_pseudo[NICK_LEN];
+    memset(my_pseudo, 0, NICK_LEN);
+
     while (1) {
         int nbfds = poll(fds, 2, -1);
-        if (nbfds < 0) {
-            perror("poll()");
-            break;
-        }
+        if (nbfds < 0) break;
 
         if (fds[0].revents & POLLIN) {
             memset(buff, 0, MSG_LEN);
             int n = 0;
             
             while ((buff[n++] = getchar()) != '\n') {
-                if (n >= MSG_LEN - 1) {
-                    break;
-                }
+                if (n >= MSG_LEN - 1) break;
             }
             buff[n] = '\0';
             
             if (strncmp("/quit", buff, 5) == 0) {
-                int size = strlen(buff);
-                send(sockfd, &size, sizeof(int), 0);
-                send(sockfd, buff, size, 0);
                 printf("demande de deconnexion... \n");
                 break;
             }
-            
-            int size = strlen(buff);
-            if (size > 1) {
-                if (send(sockfd, &size, sizeof(int), 0) <= 0) {
-                    break;
-                }
-                if (send(sockfd, buff, size, 0) <= 0) {
-                    break;
-                }
-                printf("Envoi du message reussi!\n");
+
+            struct message msg;
+            memset(&msg, 0, sizeof(struct message));
+            strcpy(msg.nick_sender, my_pseudo);
+
+            // Req 2.1 : Parser /nick
+            if (strncmp(buff, "/nick ", 6) == 0) {
+                msg.type = NICKNAME_NEW;
+                msg.pld_len = 0;
+                strncpy(msg.infos, buff + 6, INFOS_LEN - 1);
+                msg.infos[strcspn(msg.infos, "\n")] = 0; // Enlever le \n
+            } else {
+                // Req 2.11 : Message normal (Echo pour l'instant)
+                msg.type = ECHO_SEND;
+                msg.pld_len = strlen(buff);
+            }
+
+            // Envoi : structure puis payload (Req 2.0)
+            if (send(sockfd, &msg, sizeof(struct message), 0) <= 0) break;
+            if (msg.pld_len > 0) {
+                if (send(sockfd, buff, msg.pld_len, 0) <= 0) break;
             }
             
             fds[0].revents = 0;
         }
 
         if (fds[1].revents & POLLIN) {
-            int response_size = 0;
-            if (recv(sockfd, &response_size, sizeof(int), 0) <= 0) {
+            struct message reponse_msg;
+            if (recv(sockfd, &reponse_msg, sizeof(struct message), 0) <= 0) {
                 printf("\nServeur déconnecté.\n");
                 break;
             }
 
-            memset(buff, 0, MSG_LEN);
-            int total_received = 0;
-            while (total_received < response_size) {
-                int ret = recv(sockfd, buff + total_received, response_size - total_received, 0);
-                if (ret <= 0) {
-                    break;
+            char* payload = NULL;
+            if (reponse_msg.pld_len > 0) {
+                payload = malloc(reponse_msg.pld_len + 1);
+                int total_received = 0;
+                while (total_received < reponse_msg.pld_len) {
+                    int ret = recv(sockfd, payload + total_received, reponse_msg.pld_len - total_received, 0);
+                    if (ret <= 0) break;
+                    total_received += ret;
                 }
-                total_received += ret;
+                payload[reponse_msg.pld_len] = '\0';
+                
+                // Si la commande était un NICKNAME_NEW validé, on met à jour notre pseudo local (bonus d'affichage)
+                if (reponse_msg.type == NICKNAME_NEW && strstr(payload, "Welcome on the chat")) {
+                    // On récupère le dernier mot du message (qui est le pseudo validé)
+                    char* espace = strrchr(payload, ' ');
+                    if (espace) {
+                        strncpy(my_pseudo, espace + 1, NICK_LEN - 1);
+                        my_pseudo[strcspn(my_pseudo, "\n")] = 0;
+                    }
+                }
+                
+                printf("\n%s", payload);
+                free(payload);
             }
-            buff[total_received] = '\0';
-            
-            printf("\nReception du message: %s", buff);
+
             printf("Message: ");
             fflush(stdout);
             fds[1].revents = 0;
@@ -95,38 +116,19 @@ int handle_connect(const char* host, const char* port) {
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(host, port, &hints, &result) != 0) {
-        perror("getaddrinfo()");
-        exit(EXIT_FAILURE);
-    }
+    if (getaddrinfo(host, port, &hints, &result) != 0) exit(EXIT_FAILURE);
     for (rp = result; rp != NULL; rp = rp->ai_next) {
         sfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        if (sfd == -1) {
-            continue;
-        }
-        if (connect(sfd, rp->ai_addr, rp->ai_addrlen) != -1) {
-            break;
-        }
+        if (sfd == -1) continue;
+        if (connect(sfd, rp->ai_addr, rp->ai_addrlen) != -1) break;
         close(sfd);
-    }
-    if (rp == NULL) {
-        fprintf(stderr, "Could not connect\n");
-        exit(EXIT_FAILURE);
     }
     freeaddrinfo(result);
     return sfd;
 }
 
 int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        fprintf(stderr, "pas de numero de port et de serveur indique\n");
-        exit(EXIT_FAILURE);
-    }
-    int sfd;
-    const char* server_name = argv[1];
-    const char* server_port = argv[2];
-    sfd = handle_connect(server_name, server_port);
-    echo_client(sfd);
-    close(sfd);
+    if (argc != 3) exit(EXIT_FAILURE);
+    echo_client(handle_connect(argv[1], argv[2]));
     return EXIT_SUCCESS;
 }
