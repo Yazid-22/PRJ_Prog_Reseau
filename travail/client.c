@@ -50,6 +50,8 @@ void echo_client(int sockfd) {
             memset(&msg, 0, sizeof(struct message));
             strcpy(msg.nick_sender, my_pseudo);
 
+            char* payload_a_envoyer = buff;
+
             // Req 2.1 : Parser /nick
             if (strncmp(buff, "/nick ", 6) == 0) {
                 msg.type = NICKNAME_NEW;
@@ -72,6 +74,38 @@ void echo_client(int sockfd) {
                 msg.infos[strcspn(msg.infos, "\n")] = 0;
             }
 
+            // Req 2.7 : /msgall <message>
+            else if (strncmp(buff, "/msgall ", 8) == 0) {
+                msg.type = BROADCAST_SEND;
+
+                payload_a_envoyer = buff + 8;
+                msg.pld_len = strlen(payload_a_envoyer);
+            }
+
+            // Req 2.9 : /msg <pseudo> <message>
+            else if (strncmp(buff, "/msg ", 5) == 0) {
+
+                char* destinataire = buff + 5;
+                char* message = strchr(destinataire, ' ');
+
+                if (message == NULL) {
+                    printf("Usage: /msg <pseudo> <message>\n");
+                    printf("Message: ");
+                    fflush(stdout);
+                    continue;
+                }
+
+                *message = '\0';
+                message++;
+
+                msg.type = UNICAST_SEND;
+
+                strncpy(msg.infos, destinataire, INFOS_LEN - 1);
+
+                payload_a_envoyer = message;
+                msg.pld_len = strlen(payload_a_envoyer);
+            }
+
             // Message normal
             else {
                 msg.type = ECHO_SEND;
@@ -81,7 +115,12 @@ void echo_client(int sockfd) {
             // Envoi : structure puis payload (Req 2.0)
             if (send(sockfd, &msg, sizeof(struct message), 0) <= 0) break;
             if (msg.pld_len > 0) {
-                if (send(sockfd, buff, msg.pld_len, 0) <= 0) break;
+                if (send(sockfd, payload_a_envoyer, msg.pld_len, 0) <= 0) break;
+            }
+
+            if (msg.type == UNICAST_SEND || msg.type == BROADCAST_SEND) {
+                printf("Message: ");
+                fflush(stdout);
             }
             
             fds[0].revents = 0;
@@ -115,7 +154,16 @@ void echo_client(int sockfd) {
                     }
                 }
                 
-                printf("\n%s", payload);
+                if (reponse_msg.type == UNICAST_SEND ||
+                    reponse_msg.type == BROADCAST_SEND) {
+
+                    printf("\n[%s] : %s",
+                        reponse_msg.nick_sender,
+                        payload);
+                }
+                else {
+                    printf("\n%s", payload);
+                }
                 free(payload);
             }
 

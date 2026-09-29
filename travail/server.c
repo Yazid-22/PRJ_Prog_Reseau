@@ -211,8 +211,7 @@ void gerer_donnees_client(struct pollfd* fds, int i, client_t** liste_clients) {
         while (actuel != NULL) {
             if (actuel->pseudo[0] != '\0') {
                 strcat(reponse_txt, " - ");
-                strcat(reponse_txt, actuel->pseudo);
-                strcat(reponse_txt, "\n");
+                strcat(reponse_txt, actuel->pseudo);strcat(reponse_txt, "\n");
             }
 
             actuel = actuel->next;
@@ -233,45 +232,102 @@ void gerer_donnees_client(struct pollfd* fds, int i, client_t** liste_clients) {
 
         if (cible == NULL) {
             sprintf(reponse_txt,
-                    "[Serveur] : utilisateur %s introuvable.\n",
-                    msg.infos);
+                    "[Serveur] : utilisateur %s introuvable.\n",msg.infos);
         }   else {
                 char host[NI_MAXHOST];
                 char port[NI_MAXSERV];
                 char date[64];
 
-                getnameinfo((struct sockaddr*)&cible->addr,
-                    cible->addr_len,
-                    host, sizeof(host),
-                    port, sizeof(port),
-                    NI_NUMERICHOST | NI_NUMERICSERV);
+                getnameinfo((struct sockaddr*)&cible->addr,cible->addr_len,
+                    host, sizeof(host),port, sizeof(port),NI_NUMERICHOST | NI_NUMERICSERV);
 
                 struct tm* info_date = localtime(&cible->date_co);
 
-                strftime(date, sizeof(date),
-                    "%Y/%m/%d@%H:%M",
-                    info_date);
+                strftime(date, sizeof(date),"%Y/%m/%d@%H:%M",info_date);
 
                 sprintf(reponse_txt,
                     "[Serveur] : %s connected since %s with IP address %s and port number %s\n",
-                    cible->pseudo,
-                    date,
-                    host,
-                    port);
+                    cible->pseudo,date,host,port);
         }
 
         reponse_msg.pld_len = strlen(reponse_txt);
 
-        send(fds[i].fd,
-            &reponse_msg,
-            sizeof(struct message),
-            0);
+        send(fds[i].fd,&reponse_msg,sizeof(struct message),0);
 
-        send(fds[i].fd,
-            reponse_txt,
-            reponse_msg.pld_len,
-            0);
+        send(fds[i].fd,reponse_txt,reponse_msg.pld_len,0);
     }
+
+    // Req 2.7 et 2.8 : /msgall
+    else if (msg.type == BROADCAST_SEND) {
+        client_t* actuel = *liste_clients;
+
+        while (actuel != NULL) {
+
+        // Envoyer à tous sauf à l'expediteur
+        if (actuel->fd != fds[i].fd && actuel->pseudo[0] != '\0') {
+
+            struct message message_diffuse;
+            memset(&message_diffuse, 0, sizeof(struct message));
+
+            message_diffuse.type = BROADCAST_SEND;
+            message_diffuse.pld_len = msg.pld_len;
+
+            strcpy(message_diffuse.nick_sender, expediteur->pseudo);
+
+            send(actuel->fd,&message_diffuse,sizeof(struct message),0);
+
+            if (payload != NULL) {
+                send(actuel->fd,payload,msg.pld_len,0);
+            }
+        }
+
+        actuel = actuel->next;
+    }
+}
+
+    // Req 2.9 et 2.10 : /msg <pseudo> <message>
+    else if (msg.type == UNICAST_SEND) {
+
+        client_t* destinataire =
+            get_client_by_pseudo(*liste_clients, msg.infos);
+
+        // Le destinataire n'existe pas
+        if (destinataire == NULL) {
+
+            reponse_msg.type = UNICAST_SEND;
+
+            strcpy(reponse_msg.nick_sender, "Serveur");
+
+            sprintf(reponse_txt,"Utilisateur %s introuvable.\n",msg.infos);
+
+            reponse_msg.pld_len = strlen(reponse_txt);
+
+            send(fds[i].fd,&reponse_msg,sizeof(struct message),0);
+
+            send(fds[i].fd,reponse_txt,reponse_msg.pld_len,0);
+        }
+
+        // Le destinataire existe
+        else {
+
+            struct message message_prive;
+            memset(&message_prive, 0, sizeof(struct message));
+
+            message_prive.type = UNICAST_SEND;
+            message_prive.pld_len = msg.pld_len;
+
+            strcpy(message_prive.nick_sender,expediteur->pseudo);
+
+            send(destinataire->fd,&message_prive,sizeof(struct message),0);
+
+            if (payload != NULL) {
+                send(destinataire->fd,payload,msg.pld_len,0);
+            }
+        }
+    }       
+
+
+
 
 
     // Req 2.11 : Echo pour tester (en attendant les requêtes msg/msgall)
