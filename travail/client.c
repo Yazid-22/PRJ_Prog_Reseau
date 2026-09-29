@@ -24,7 +24,7 @@ void echo_client(int sockfd) {
     printf("Message: ");
     fflush(stdout);
 
-    // On stocke le pseudo actuel du client
+    // On stock le psedo actuel du client
     char my_pseudo[NICK_LEN];
     memset(my_pseudo, 0, NICK_LEN);
 
@@ -52,21 +52,31 @@ void echo_client(int sockfd) {
 
             char* payload_a_envoyer = buff;
 
-            // Req 2.1 : Parser /nick
+            //
             if (strncmp(buff, "/nick ", 6) == 0) {
+                char* pseudo = buff + 6;
+                pseudo[strcspn(pseudo, "\n")] = '\0';
+
+                if (strlen(pseudo) >= NICK_LEN) {
+                    printf("Pseudo trop long.\n");
+                    printf("Message: ");
+                    fflush(stdout);
+                    continue;
+                }
+
                 msg.type = NICKNAME_NEW;
                 msg.pld_len = 0;
                 strncpy(msg.infos, buff + 6, INFOS_LEN - 1);
                 msg.infos[strcspn(msg.infos, "\n")] = 0;
             }
 
-            // Req 2.5 : /who
+            // Requete 2.5 : /who
             else if (strcmp(buff, "/who\n") == 0) {
                 msg.type = NICKNAME_LIST;
                 msg.pld_len = 0;
             }
 
-            // Req 2.6 : /whois <pseudo>
+            // Req 2.6 /whois (pour identifier pseudo que je vais demander)
             else if (strncmp(buff, "/whois ", 7) == 0) {
                 msg.type = NICKNAME_INFOS;
                 msg.pld_len = 0;
@@ -74,7 +84,7 @@ void echo_client(int sockfd) {
                 msg.infos[strcspn(msg.infos, "\n")] = 0;
             }
 
-            // Req 2.7 : /msgall <message>
+            // Req 2.7 /msgall (envoir message à tous)
             else if (strncmp(buff, "/msgall ", 8) == 0) {
                 msg.type = BROADCAST_SEND;
 
@@ -82,7 +92,7 @@ void echo_client(int sockfd) {
                 msg.pld_len = strlen(payload_a_envoyer);
             }
 
-            // Req 2.9 : /msg <pseudo> <message>
+            // Req 2.9
             else if (strncmp(buff, "/msg ", 5) == 0) {
 
                 char* destinataire = buff + 5;
@@ -99,20 +109,18 @@ void echo_client(int sockfd) {
                 message++;
 
                 msg.type = UNICAST_SEND;
-
                 strncpy(msg.infos, destinataire, INFOS_LEN - 1);
-
                 payload_a_envoyer = message;
                 msg.pld_len = strlen(payload_a_envoyer);
             }
 
-            // Message normal
+            
             else {
                 msg.type = ECHO_SEND;
                 msg.pld_len = strlen(buff);
                 }
 
-            // Envoi : structure puis payload (Req 2.0)
+            // Envoi : structure puis payload (Requete 2.0)
             if (send(sockfd, &msg, sizeof(struct message), 0) <= 0) break;
             if (msg.pld_len > 0) {
                 if (send(sockfd, payload_a_envoyer, msg.pld_len, 0) <= 0) break;

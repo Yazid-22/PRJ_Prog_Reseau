@@ -16,7 +16,7 @@
 
 #define FD_TAB_SIZE 128
 
-// Req 2.3 : Mise à jour de la structure client avec pseudo et date de co
+// Req 2.3 structure client avec psedo et date de connexion
 typedef struct client {
     int fd;
     struct sockaddr_storage addr;
@@ -147,7 +147,7 @@ void gerer_donnees_client(struct pollfd* fds, int i, client_t** liste_clients) {
     struct message msg;
     memset(&msg, 0, sizeof(struct message));
 
-    // Req 2.0 : Lire la structure
+    // Req 2.0 
     int ret = read_from_socket(fds[i].fd, &msg, sizeof(struct message));
     
     if (ret <= 0) {
@@ -157,7 +157,7 @@ void gerer_donnees_client(struct pollfd* fds, int i, client_t** liste_clients) {
         return;
     }
 
-    // Req 2.0 : Lire le payload éventuel
+    // Req 2.0 : payload
     char* payload = NULL;
     if (msg.pld_len > 0) {
         payload = malloc(msg.pld_len + 1);
@@ -223,7 +223,7 @@ void gerer_donnees_client(struct pollfd* fds, int i, client_t** liste_clients) {
         send(fds[i].fd, reponse_txt, reponse_msg.pld_len, 0);
     }
 
-    // Req 2.6 : /whois <pseudo>
+    // Req 2.6 pour le whois 
     else if (msg.type == NICKNAME_INFOS) {
 
         reponse_msg.type = NICKNAME_INFOS;
@@ -257,7 +257,7 @@ void gerer_donnees_client(struct pollfd* fds, int i, client_t** liste_clients) {
         send(fds[i].fd,reponse_txt,reponse_msg.pld_len,0);
     }
 
-    // Req 2.7 et 2.8 : /msgall
+    // Req 2.7 et2.8  /msgall
     else if (msg.type == BROADCAST_SEND) {
         client_t* actuel = *liste_clients;
 
@@ -285,7 +285,7 @@ void gerer_donnees_client(struct pollfd* fds, int i, client_t** liste_clients) {
     }
 }
 
-    // Req 2.9 et 2.10 : /msg <pseudo> <message>
+    // Req 2.9 et 2.10  ( corrigées nizar)
     else if (msg.type == UNICAST_SEND) {
 
         client_t* destinataire =
@@ -330,7 +330,7 @@ void gerer_donnees_client(struct pollfd* fds, int i, client_t** liste_clients) {
 
 
 
-    // Req 2.11 : Echo pour tester (en attendant les requêtes msg/msgall)
+    // Req 2.11 
     else if (msg.type == ECHO_SEND) {
         reponse_msg.type = ECHO_SEND;
         reponse_msg.pld_len = msg.pld_len;
