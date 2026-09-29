@@ -55,12 +55,28 @@ void echo_client(int sockfd) {
                 msg.type = NICKNAME_NEW;
                 msg.pld_len = 0;
                 strncpy(msg.infos, buff + 6, INFOS_LEN - 1);
-                msg.infos[strcspn(msg.infos, "\n")] = 0; // Enlever le \n
-            } else {
-                // Req 2.11 : Message normal (Echo pour l'instant)
+                msg.infos[strcspn(msg.infos, "\n")] = 0;
+            }
+
+            // Req 2.5 : /who
+            else if (strcmp(buff, "/who\n") == 0) {
+                msg.type = NICKNAME_LIST;
+                msg.pld_len = 0;
+            }
+
+            // Req 2.6 : /whois <pseudo>
+            else if (strncmp(buff, "/whois ", 7) == 0) {
+                msg.type = NICKNAME_INFOS;
+                msg.pld_len = 0;
+                strncpy(msg.infos, buff + 7, INFOS_LEN - 1);
+                msg.infos[strcspn(msg.infos, "\n")] = 0;
+            }
+
+            // Message normal
+            else {
                 msg.type = ECHO_SEND;
                 msg.pld_len = strlen(buff);
-            }
+                }
 
             // Envoi : structure puis payload (Req 2.0)
             if (send(sockfd, &msg, sizeof(struct message), 0) <= 0) break;

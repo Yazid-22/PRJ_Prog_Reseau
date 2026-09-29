@@ -77,6 +77,20 @@ client_t* get_client_by_fd(client_t* tete, int fd) {
     return NULL;
 }
 
+client_t* get_client_by_pseudo(client_t* tete, const char* pseudo) {
+    client_t* actuel = tete;
+
+    while (actuel != NULL) {
+        if (strcmp(actuel->pseudo, pseudo) == 0) {
+            return actuel;
+        }
+
+        actuel = actuel->next;
+    }
+
+    return NULL;
+}
+
 // Req 2.2 : Vérifier si un pseudo est déjà utilisé
 int pseudo_existe(client_t* tete, const char* pseudo) {
     client_t* actuel = tete;
@@ -185,6 +199,81 @@ void gerer_donnees_client(struct pollfd* fds, int i, client_t** liste_clients) {
         send(fds[i].fd, &reponse_msg, sizeof(struct message), 0);
         send(fds[i].fd, reponse_txt, reponse_msg.pld_len, 0);
     }
+
+    // Req 2.5 : /who
+    else if (msg.type == NICKNAME_LIST) {
+        reponse_msg.type = NICKNAME_LIST;
+
+        strcpy(reponse_txt, "[Serveur] : Online users are\n");
+
+        client_t* actuel = *liste_clients;
+
+        while (actuel != NULL) {
+            if (actuel->pseudo[0] != '\0') {
+                strcat(reponse_txt, " - ");
+                strcat(reponse_txt, actuel->pseudo);
+                strcat(reponse_txt, "\n");
+            }
+
+            actuel = actuel->next;
+        }
+
+        reponse_msg.pld_len = strlen(reponse_txt);
+
+        send(fds[i].fd, &reponse_msg, sizeof(struct message), 0);
+        send(fds[i].fd, reponse_txt, reponse_msg.pld_len, 0);
+    }
+
+    // Req 2.6 : /whois <pseudo>
+    else if (msg.type == NICKNAME_INFOS) {
+
+        reponse_msg.type = NICKNAME_INFOS;
+
+        client_t* cible = get_client_by_pseudo(*liste_clients, msg.infos);
+
+        if (cible == NULL) {
+            sprintf(reponse_txt,
+                    "[Serveur] : utilisateur %s introuvable.\n",
+                    msg.infos);
+        }   else {
+                char host[NI_MAXHOST];
+                char port[NI_MAXSERV];
+                char date[64];
+
+                getnameinfo((struct sockaddr*)&cible->addr,
+                    cible->addr_len,
+                    host, sizeof(host),
+                    port, sizeof(port),
+                    NI_NUMERICHOST | NI_NUMERICSERV);
+
+                struct tm* info_date = localtime(&cible->date_co);
+
+                strftime(date, sizeof(date),
+                    "%Y/%m/%d@%H:%M",
+                    info_date);
+
+                sprintf(reponse_txt,
+                    "[Serveur] : %s connected since %s with IP address %s and port number %s\n",
+                    cible->pseudo,
+                    date,
+                    host,
+                    port);
+        }
+
+        reponse_msg.pld_len = strlen(reponse_txt);
+
+        send(fds[i].fd,
+            &reponse_msg,
+            sizeof(struct message),
+            0);
+
+        send(fds[i].fd,
+            reponse_txt,
+            reponse_msg.pld_len,
+            0);
+    }
+
+
     // Req 2.11 : Echo pour tester (en attendant les requêtes msg/msgall)
     else if (msg.type == ECHO_SEND) {
         reponse_msg.type = ECHO_SEND;
