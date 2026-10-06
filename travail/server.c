@@ -16,7 +16,6 @@
 
 #define FD_TAB_SIZE 128
 
-// Req 2.3 structure client avec psedo et date de connexion
 typedef struct client {
     int fd;
     struct sockaddr_storage addr;
@@ -42,8 +41,8 @@ client_t* add_client(client_t* tete, int fd, struct sockaddr_storage* addr, sock
     nouveau->fd = fd;
     nouveau->addr = *addr;
     nouveau->addr_len = addr_len;
-    memset(nouveau->pseudo, 0, NICK_LEN); // Pseudo vide au départ
-    time(&(nouveau->date_co)); // Date de connexion
+    memset(nouveau->pseudo, 0, NICK_LEN);
+    time(&(nouveau->date_co));
     nouveau->next = tete;
     return nouveau;
 }
@@ -79,19 +78,15 @@ client_t* get_client_by_fd(client_t* tete, int fd) {
 
 client_t* get_client_by_pseudo(client_t* tete, const char* pseudo) {
     client_t* actuel = tete;
-
     while (actuel != NULL) {
         if (strcmp(actuel->pseudo, pseudo) == 0) {
             return actuel;
         }
-
         actuel = actuel->next;
     }
-
     return NULL;
 }
 
-// Req 2.2 : Vérifier si un pseudo est déjà utilisé
 int pseudo_existe(client_t* tete, const char* pseudo) {
     client_t* actuel = tete;
     while (actuel != NULL) {
@@ -101,7 +96,6 @@ int pseudo_existe(client_t* tete, const char* pseudo) {
     return 0;
 }
 
-// Req 2.1 : Valider alphanumérique
 int est_pseudo_valide(const char* pseudo) {
     if (strlen(pseudo) == 0 || strlen(pseudo) >= NICK_LEN) return 0;
     for (int i = 0; pseudo[i] != '\0'; i++) {
@@ -147,7 +141,6 @@ void gerer_donnees_client(struct pollfd* fds, int i, client_t** liste_clients) {
     struct message msg;
     memset(&msg, 0, sizeof(struct message));
 
-    // Req 2.0 
     int ret = read_from_socket(fds[i].fd, &msg, sizeof(struct message));
     
     if (ret <= 0) {
@@ -157,7 +150,6 @@ void gerer_donnees_client(struct pollfd* fds, int i, client_t** liste_clients) {
         return;
     }
 
-    // Req 2.0 : payload
     char* payload = NULL;
     if (msg.pld_len > 0) {
         payload = malloc(msg.pld_len + 1);
@@ -183,7 +175,6 @@ void gerer_donnees_client(struct pollfd* fds, int i, client_t** liste_clients) {
     char reponse_txt[MSG_LEN];
     memset(reponse_txt, 0, MSG_LEN);
 
-    // Req 2.1, 2.2, 2.4 : Gestion de NICKNAME_NEW
     if (msg.type == NICKNAME_NEW) {
         if (!est_pseudo_valide(msg.infos)) {
             sprintf(reponse_txt, "[Serveur] : Pseudo invalide (lettres et chiffres uniquement).\n");
@@ -199,138 +190,97 @@ void gerer_donnees_client(struct pollfd* fds, int i, client_t** liste_clients) {
         send(fds[i].fd, &reponse_msg, sizeof(struct message), 0);
         send(fds[i].fd, reponse_txt, reponse_msg.pld_len, 0);
     }
-
-    // Req 2.5 : /who
     else if (msg.type == NICKNAME_LIST) {
         reponse_msg.type = NICKNAME_LIST;
-
         strcpy(reponse_txt, "[Serveur] : Online users are\n");
-
         client_t* actuel = *liste_clients;
-
         while (actuel != NULL) {
             if (actuel->pseudo[0] != '\0') {
                 strcat(reponse_txt, " - ");
                 strcat(reponse_txt, actuel->pseudo);strcat(reponse_txt, "\n");
             }
-
             actuel = actuel->next;
         }
-
         reponse_msg.pld_len = strlen(reponse_txt);
-
         send(fds[i].fd, &reponse_msg, sizeof(struct message), 0);
         send(fds[i].fd, reponse_txt, reponse_msg.pld_len, 0);
     }
-
-    // Req 2.6 pour le whois 
     else if (msg.type == NICKNAME_INFOS) {
-
         reponse_msg.type = NICKNAME_INFOS;
-
         client_t* cible = get_client_by_pseudo(*liste_clients, msg.infos);
-
         if (cible == NULL) {
-            sprintf(reponse_txt,
-                    "[Serveur] : utilisateur %s introuvable.\n",msg.infos);
-        }   else {
-                char host[NI_MAXHOST];
-                char port[NI_MAXSERV];
-                char date[64];
-
-                getnameinfo((struct sockaddr*)&cible->addr,cible->addr_len,
-                    host, sizeof(host),port, sizeof(port),NI_NUMERICHOST | NI_NUMERICSERV);
-
-                struct tm* info_date = localtime(&cible->date_co);
-
-                strftime(date, sizeof(date),"%Y/%m/%d@%H:%M",info_date);
-
-                sprintf(reponse_txt,
-                    "[Serveur] : %s connected since %s with IP address %s and port number %s\n",
-                    cible->pseudo,date,host,port);
+            sprintf(reponse_txt, "[Serveur] : utilisateur %s introuvable.\n", msg.infos);
+        } else {
+            char host[NI_MAXHOST];
+            char port[NI_MAXSERV];
+            char date[64];
+            getnameinfo((struct sockaddr*)&cible->addr, cible->addr_len, host, sizeof(host), port, sizeof(port), NI_NUMERICHOST | NI_NUMERICSERV);
+            struct tm* info_date = localtime(&cible->date_co);
+            strftime(date, sizeof(date), "%Y/%m/%d@%H:%M", info_date);
+            sprintf(reponse_txt, "[Serveur] : %s connected since %s with IP address %s and port number %s\n", cible->pseudo, date, host, port);
         }
-
         reponse_msg.pld_len = strlen(reponse_txt);
-
-        send(fds[i].fd,&reponse_msg,sizeof(struct message),0);
-
-        send(fds[i].fd,reponse_txt,reponse_msg.pld_len,0);
+        send(fds[i].fd, &reponse_msg, sizeof(struct message), 0);
+        send(fds[i].fd, reponse_txt, reponse_msg.pld_len, 0);
     }
-
-    // Req 2.7 et2.8  /msgall
     else if (msg.type == BROADCAST_SEND) {
         client_t* actuel = *liste_clients;
-
         while (actuel != NULL) {
-
-        // Envoyer à tous sauf à l'expediteur
-        if (actuel->fd != fds[i].fd && actuel->pseudo[0] != '\0') {
-
-            struct message message_diffuse;
-            memset(&message_diffuse, 0, sizeof(struct message));
-
-            message_diffuse.type = BROADCAST_SEND;
-            message_diffuse.pld_len = msg.pld_len;
-
-            strcpy(message_diffuse.nick_sender, expediteur->pseudo);
-
-            send(actuel->fd,&message_diffuse,sizeof(struct message),0);
-
-            if (payload != NULL) {
-                send(actuel->fd,payload,msg.pld_len,0);
+            if (actuel->fd != fds[i].fd && actuel->pseudo[0] != '\0') {
+                struct message message_diffuse;
+                memset(&message_diffuse, 0, sizeof(struct message));
+                message_diffuse.type = BROADCAST_SEND;
+                message_diffuse.pld_len = msg.pld_len;
+                strcpy(message_diffuse.nick_sender, expediteur->pseudo);
+                send(actuel->fd, &message_diffuse, sizeof(struct message), 0);
+                if (payload != NULL) send(actuel->fd, payload, msg.pld_len, 0);
             }
+            actuel = actuel->next;
         }
-
-        actuel = actuel->next;
     }
-}
-
-    // Req 2.9 et 2.10  ( corrigées nizar)
     else if (msg.type == UNICAST_SEND) {
-
-        client_t* destinataire =
-            get_client_by_pseudo(*liste_clients, msg.infos);
-
-        // Le destinataire n'existe pas
+        client_t* destinataire = get_client_by_pseudo(*liste_clients, msg.infos);
         if (destinataire == NULL) {
-
             reponse_msg.type = UNICAST_SEND;
-
             strcpy(reponse_msg.nick_sender, "Serveur");
-
-            sprintf(reponse_txt,"Utilisateur %s introuvable.\n",msg.infos);
-
+            sprintf(reponse_txt, "Utilisateur %s introuvable.\n", msg.infos);
             reponse_msg.pld_len = strlen(reponse_txt);
-
-            send(fds[i].fd,&reponse_msg,sizeof(struct message),0);
-
-            send(fds[i].fd,reponse_txt,reponse_msg.pld_len,0);
-        }
-
-        // Le destinataire existe
-        else {
-
+            send(fds[i].fd, &reponse_msg, sizeof(struct message), 0);
+            send(fds[i].fd, reponse_txt, reponse_msg.pld_len, 0);
+        } else {
             struct message message_prive;
             memset(&message_prive, 0, sizeof(struct message));
-
             message_prive.type = UNICAST_SEND;
             message_prive.pld_len = msg.pld_len;
-
-            strcpy(message_prive.nick_sender,expediteur->pseudo);
-
-            send(destinataire->fd,&message_prive,sizeof(struct message),0);
-
+            strcpy(message_prive.nick_sender, expediteur->pseudo);
+            send(destinataire->fd, &message_prive, sizeof(struct message), 0);
+            if (payload != NULL) send(destinataire->fd, payload, msg.pld_len, 0);
+        }
+    }
+    //  REQ 3.1, 3.2 et 3.4 
+    else if (msg.type == FILE_REQUEST || msg.type == FILE_ACCEPT || msg.type == FILE_REJECT) {
+        client_t* destinataire = get_client_by_pseudo(*liste_clients, msg.infos);
+        
+        if (destinataire == NULL) {
+            struct message erreur_msg;
+            memset(&erreur_msg, 0, sizeof(struct message));
+            erreur_msg.type = FILE_REJECT;
+            strcpy(erreur_msg.nick_sender, "Serveur");
+            erreur_msg.pld_len = 0;
+            send(fds[i].fd, &erreur_msg, sizeof(struct message), 0);
+        } else {
+            struct message msg_transfert;
+            memset(&msg_transfert, 0, sizeof(struct message));
+            msg_transfert.type = msg.type;
+            msg_transfert.pld_len = msg.pld_len;
+            strcpy(msg_transfert.nick_sender, expediteur->pseudo);
+            
+            send(destinataire->fd, &msg_transfert, sizeof(struct message), 0);
             if (payload != NULL) {
-                send(destinataire->fd,payload,msg.pld_len,0);
+                send(destinataire->fd, payload, msg.pld_len, 0);
             }
         }
-    }       
-
-
-
-
-
-    // Req 2.11 
+    }
     else if (msg.type == ECHO_SEND) {
         reponse_msg.type = ECHO_SEND;
         reponse_msg.pld_len = msg.pld_len;

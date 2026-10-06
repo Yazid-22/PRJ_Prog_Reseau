@@ -9,7 +9,7 @@
 #include <poll.h>
 
 #include "common.h"
-#include "msg_struct.h" // Req 2.0
+#include "msg_struct.h"
 
 void echo_client(int sockfd) {
     struct pollfd fds[2];
@@ -24,9 +24,15 @@ void echo_client(int sockfd) {
     printf("Message: ");
     fflush(stdout);
 
-    // On stock le psedo actuel du client
     char my_pseudo[NICK_LEN];
     memset(my_pseudo, 0, NICK_LEN);
+
+    char pseudo_emetteur_fichier[NICK_LEN]; 
+    memset(pseudo_emetteur_fichier, 0, NICK_LEN);
+    int en_attente_reponse_fichier = 0; 
+    char chemin_fichier_local[MSG_LEN]; 
+    memset(chemin_fichier_local, 0, MSG_LEN);
+    // -------------------------
 
     while (1) {
         int nbfds = poll(fds, 2, -1);
@@ -52,8 +58,31 @@ void echo_client(int sockfd) {
 
             char* payload_a_envoyer = buff;
 
-            //
-            if (strncmp(buff, "/nick ", 6) == 0) {
+            // REQ 3.2 
+            if (en_attente_reponse_fichier && (buff[0] == 'Y' || buff[0] == 'y' || buff[0] == 'N' || buff[0] == 'n') && (buff[1] == '\0' || buff[1] == '\n')) {
+                
+                if (buff[0] == 'Y' || buff[0] == 'y') {
+                    msg.type = FILE_ACCEPT;
+                    strncpy(msg.infos, pseudo_emetteur_fichier, INFOS_LEN - 1); 
+                    
+    
+                    payload_a_envoyer = "127.0.0.1:8080"; 
+                    msg.pld_len = strlen(payload_a_envoyer);
+                } else {
+                    msg.type = FILE_REJECT;
+                    strncpy(msg.infos, pseudo_emetteur_fichier, INFOS_LEN - 1); 
+                    msg.pld_len = 0;
+                }
+                
+                en_attente_reponse_fichier = 0; 
+            }
+            else if (en_attente_reponse_fichier) {
+                printf("Veuillez repondre par Y ou N.\n");
+                fflush(stdout);
+                continue;
+            }
+
+            else if (strncmp(buff, "/nick ", 6) == 0) {
                 char* pseudo = buff + 6;
                 pseudo[strcspn(pseudo, "\n")] = '\0';
 
@@ -69,34 +98,32 @@ void echo_client(int sockfd) {
                 strncpy(msg.infos, buff + 6, INFOS_LEN - 1);
                 msg.infos[strcspn(msg.infos, "\n")] = 0;
             }
-
-            // Requete 2.5 : /who
             else if (strcmp(buff, "/who\n") == 0) {
                 msg.type = NICKNAME_LIST;
                 msg.pld_len = 0;
             }
-
-            // Req 2.6 /whois (pour identifier pseudo que je vais demander)
             else if (strncmp(buff, "/whois ", 7) == 0) {
                 msg.type = NICKNAME_INFOS;
                 msg.pld_len = 0;
                 strncpy(msg.infos, buff + 7, INFOS_LEN - 1);
                 msg.infos[strcspn(msg.infos, "\n")] = 0;
             }
-
-            // Req 2.7 /msgall (envoir message à tous)
             else if (strncmp(buff, "/msgall ", 8) == 0) {
                 msg.type = BROADCAST_SEND;
-
                 payload_a_envoyer = buff + 8;
                 msg.pld_len = strlen(payload_a_envoyer);
             }
-
-            // Req 2.9
             else if (strncmp(buff, "/msg ", 5) == 0) {
-
                 char* destinataire = buff + 5;
-                char* message = strchr(destinataire, ' ');
+                char* message = NULL;
+
+                for (int j = 0; destinataire[j] != '\0'; j++) {
+                    if (destinataire[j] == ' ') {
+                        destinataire[j] = '\0';
+                        message = destinataire + j + 1;
+                        break;
+                    }
+                }
 
                 if (message == NULL) {
                     printf("Usage: /msg <pseudo> <message>\n");
@@ -105,28 +132,70 @@ void echo_client(int sockfd) {
                     continue;
                 }
 
-                *message = '\0';
-                message++;
-
                 msg.type = UNICAST_SEND;
                 strncpy(msg.infos, destinataire, INFOS_LEN - 1);
                 payload_a_envoyer = message;
                 msg.pld_len = strlen(payload_a_envoyer);
             }
+            else if (strncmp(buff, "/send ", 6) == 0) {
+                char* destinataire = buff + 6;
+                char* chemin_fichier = NULL;
 
-            
+                for (int j = 0; destinataire[j] != '\0'; j++) {
+                    if (destinataire[j] == ' ') {
+                        destinataire[j] = '\0'; 
+                        chemin_fichier = destinataire + j + 1; 
+                        break; 
+                    }
+                }
+
+                if (chemin_fichier == NULL) {
+                    printf("Usage: /send <pseudo> <chemin_fichier>\nMessage: ");
+                    fflush(stdout);
+                    continue;
+                }
+
+                if (chemin_fichier[0] == '"') {
+                    chemin_fichier++; 
+                    for (int j = 0; chemin_fichier[j] != '\0'; j++) {
+                        if (chemin_fichier[j] == '"') {
+                            chemin_fichier[j] = '\0'; 
+                        }
+                    }
+                }
+                
+                for (int j = 0; chemin_fichier[j] != '\0'; j++) {
+                    if (chemin_fichier[j] == '\n') {
+                        chemin_fichier[j] = '\0';
+                        break;
+                    }
+                }
+
+                char* nom_fichier = chemin_fichier; 
+                for (int j = 0; chemin_fichier[j] != '\0'; j++) {
+                    if (chemin_fichier[j] == '/') {
+                        nom_fichier = chemin_fichier + j + 1; 
+                    }
+                }
+
+                strncpy(chemin_fichier_local, chemin_fichier, MSG_LEN - 1);
+
+                msg.type = FILE_REQUEST;
+                strncpy(msg.infos, destinataire, INFOS_LEN - 1); 
+                payload_a_envoyer = nom_fichier; 
+                msg.pld_len = strlen(payload_a_envoyer);
+            }
             else {
                 msg.type = ECHO_SEND;
                 msg.pld_len = strlen(buff);
-                }
+            }
 
-            // Envoi : structure puis payload (Requete 2.0)
             if (send(sockfd, &msg, sizeof(struct message), 0) <= 0) break;
             if (msg.pld_len > 0) {
                 if (send(sockfd, payload_a_envoyer, msg.pld_len, 0) <= 0) break;
             }
 
-            if (msg.type == UNICAST_SEND || msg.type == BROADCAST_SEND) {
+            if (msg.type == UNICAST_SEND || msg.type == BROADCAST_SEND || msg.type == FILE_REQUEST) {
                 printf("Message: ");
                 fflush(stdout);
             }
@@ -151,31 +220,45 @@ void echo_client(int sockfd) {
                     total_received += ret;
                 }
                 payload[reponse_msg.pld_len] = '\0';
-                
-                // Si la commande était un NICKNAME_NEW validé, on met à jour notre pseudo local (bonus d'affichage)
+
                 if (reponse_msg.type == NICKNAME_NEW && strstr(payload, "Welcome on the chat")) {
-                    // On récupère le dernier mot du message (qui est le pseudo validé)
-                    char* espace = strrchr(payload, ' ');
+                    char* espace = NULL;
+                    for (int j = 0; payload[j] != '\0'; j++) {
+                        if (payload[j] == ' ') espace = payload + j;
+                    }
                     if (espace) {
                         strncpy(my_pseudo, espace + 1, NICK_LEN - 1);
                         my_pseudo[strcspn(my_pseudo, "\n")] = 0;
                     }
                 }
-                
-                if (reponse_msg.type == UNICAST_SEND ||
-                    reponse_msg.type == BROADCAST_SEND) {
-
-                    printf("\n[%s] : %s",
-                        reponse_msg.nick_sender,
-                        payload);
-                }
-                else {
-                    printf("\n%s", payload);
-                }
-                free(payload);
             }
 
-            printf("Message: ");
+            if (reponse_msg.type == FILE_REQUEST) {
+                printf("\n%s wants you to accept the transfer of the file named \"%s\". Do you accept? [Y/N]\n", 
+                       reponse_msg.nick_sender, payload);
+                
+                strncpy(pseudo_emetteur_fichier, reponse_msg.nick_sender, NICK_LEN - 1);
+                en_attente_reponse_fichier = 1;
+            }
+            else if (reponse_msg.type == FILE_ACCEPT) {
+                printf("\n%s accepted file transfer.\n", reponse_msg.nick_sender);
+                printf("Connecting to %s and sending the file...\n", reponse_msg.nick_sender);
+            }
+            else if (reponse_msg.type == FILE_REJECT) {
+                printf("\n%s cancelled file transfer.\n", reponse_msg.nick_sender);
+            }
+            else if (reponse_msg.type == UNICAST_SEND || reponse_msg.type == BROADCAST_SEND) {
+                printf("\n[%s] : %s", reponse_msg.nick_sender, payload);
+            }
+            else {
+                if (payload) printf("\n%s", payload);
+            }
+
+            if (payload) free(payload);
+
+            if (!en_attente_reponse_fichier) {
+                printf("Message: ");
+            }
             fflush(stdout);
             fds[1].revents = 0;
         }
